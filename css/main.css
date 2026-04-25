@@ -222,6 +222,58 @@ body #nav-music {
   word-break: break-all; /* 针对所有内容强制换行 */
 }
 
+#heoMusic-page .aplayer-info .aplayer-lrc p .aplayer-lrc-main {
+  display: block;
+  white-space: pre-wrap;
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p .aplayer-lrc-subline {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.52em;
+  line-height: 1.45;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p .aplayer-lrc-word {
+  display: inline-block;
+  --word-progress: 0;
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p.aplayer-lrc-current .aplayer-lrc-word {
+  color: transparent;
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p .aplayer-lrc-word .aplayer-lrc-word-text {
+  display: inline-block;
+  color: transparent;
+  white-space: pre-wrap;
+  background-image: linear-gradient(
+    90deg,
+    #ffffff 0,
+    #ffffff calc(var(--word-progress) * 100%),
+    rgba(255, 255, 255, 0.42) calc(var(--word-progress) * 100%),
+    rgba(255, 255, 255, 0.42) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p.aplayer-lrc-current .aplayer-lrc-word .aplayer-lrc-word-text {
+  background-image: linear-gradient(
+    90deg,
+    #ffffff 0,
+    #ffffff calc(var(--word-progress) * 100%),
+    rgba(255, 255, 255, 0.58) calc(var(--word-progress) * 100%),
+    rgba(255, 255, 255, 0.58) 100%
+  );
+}
+
+#heoMusic-page .aplayer-info .aplayer-lrc p .aplayer-lrc-word.aplayer-lrc-word-active .aplayer-lrc-word-text {
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.32);
+}
+
 #heoMusic-page .aplayer-info .aplayer-lrc p:hover::after {
   opacity: 1;
 }
@@ -352,17 +404,6 @@ body #nav-music {
   border: 1px solid rgba(255,255,255,.25);
   background: rgba(0,0,0,.55); color: #fff; cursor: pointer;
 }
-
-.mini-song-card {
-  position: fixed; left: 16px; top: 16px; z-index: 18;
-  display: flex; align-items: center; gap: 10px;
-  background: rgba(0,0,0,.45); color:#fff; border-radius: 12px; padding: 8px 10px;
-  max-width: 300px; transition: opacity .4s;
-}
-.mini-song-card img { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; }
-.mini-song-card.hidden { opacity: 0; pointer-events: none; }
-#mini-title { font-size: 13px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 210px; }
-#mini-artist { font-size: 12px; opacity: .78; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 210px; }
 
 .hover-lyric-preview {
   position: fixed; z-index: 30; pointer-events: none; color: #fff;

@@ -52,14 +52,405 @@ const enhanceState = {
   lyricOffset: 0,
   showRemaining: false,
   demoMode: false,
-  fluid: { raf: null, ctx: null, analyzer: null, dataArray: null, paused: false }
+  fluid: { raf: null, canvasCtx: null, audioCtx: null, source: null, analyzer: null, dataArray: null, paused: false }
 };
 
 // 获取地址栏参数
 // 创建URLSearchParams对象并传入URL中的查询字符串
 const params = new URLSearchParams(window.location.search);
 
+function escapeHTML(text) {
+  return String(text == null ? '' : text).replace(/[&<>"']/g, function (char) {
+    return ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[char];
+  });
+}
+
 var heo = {
+  lyricRuntime: {
+    cache: new Map(),
+    currentDetail: [],
+    activeWordIndex: -1,
+    rafId: null,
+    boundPlayer: null
+  },
+  getCurrentLyricText: function () {
+    const currentLine = document.querySelector('.aplayer-lrc-current');
+    if (!currentLine) return '';
+    return currentLine.getAttribute('data-primary') || currentLine.querySelector('.aplayer-lrc-main')?.textContent || currentLine.textContent || '';
+  },
+  appendQueryParams: function (url, extraParams) {
+    if (!url || typeof url !== 'string') return url;
+    try {
+      const target = new URL(url, window.location.href);
+      Object.keys(extraParams || {}).forEach((key) => {
+        const value = extraParams[key];
+        if (value !== undefined && value !== null && value !== '') {
+          target.searchParams.set(key, value);
+        }
+      });
+      return target.toString();
+    } catch (error) {
+      return url;
+    }
+  },
+  isStructuredLyricApi: function (url) {
+    if (!url || typeof url !== 'string') return false;
+    try {
+      const target = new URL(url, window.location.href);
+      return target.searchParams.get('type') === 'lrc' || /\/meting\/?/i.test(target.pathname);
+    } catch (error) {
+      return false;
+    }
+  },
+  createLyricRequestUrls: function (rawUrl) {
+    if (!this.isStructuredLyricApi(rawUrl)) {
+      return {
+        enhanced: rawUrl,
+        secondary: ''
+      };
+    }
+    return {
+      enhanced: this.appendQueryParams(rawUrl, { format: 'elrc', lrc_normalize: 'true' }),
+      secondary: this.appendQueryParams(rawUrl, { format: 'lrc', trans: 'true', roma: 'true', lrc_normalize: 'true' })
+    };
+  },
+  parseTimestamp: function (value) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (!value && value !== 0) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) return Number(text);
+    const pure = text.replace(/[<>[\]]/g, '');
+    const parts = pure.split(':').map(Number);
+    if (parts.some((item) => Number.isNaN(item))) return null;
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    if (parts.length === 2) {
+      return parts[0] * 60 + parts[1];
+    }
+    return null;
+  },
+  parseStandardLrc: function (content) {
+    if (!content) return [];
+    const rows = [];
+    const normalized = String(content).replace(/\r/g, '').replace(/([^\]^\n])\[/g, '$1\n[');
+    normalized.split('\n').forEach((line) => {
+      const timeTags = line.match(/\[(\d{2}):(\d{2})(\.(\d{2,3}))?]/g);
+      if (!timeTags) return;
+      const text = line.replace(/\[(\d{2}):(\d{2})(\.(\d{2,3}))?]/g, '').trim();
+      timeTags.forEach((tag) => {
+        const time = this.parseTimestamp(tag);
+        if (time !== null) {
+          rows.push([time, text]);
+        }
+      });
+    });
+    return rows.sort((a, b) => a[0] - b[0]);
+  },
+  parseEnhancedLrc: function (content) {
+    const baseLines = this.parseStandardLrc(content);
+    if (!baseLines.length) {
+      return [{
+        time: 0,
+        text: '暂无歌词',
+        secondary: [],
+        words: []
+      }];
+    }
+
+    const rawLines = String(content).replace(/\r/g, '').split('\n');
+    const detailByTime = new Map();
+
+    rawLines.forEach((rawLine) => {
+      const timeTags = rawLine.match(/\[(\d{2}):(\d{2})(\.(\d{2,3}))?]/g);
+      if (!timeTags) return;
+
+      const lineText = rawLine.replace(/\[(\d{2}):(\d{2})(\.(\d{2,3}))?]/g, '').trim();
+      const wordMatches = [...rawLine.matchAll(/<(\d{2}):(\d{2})(\.(\d{2,3}))?>([^<\n]*)/g)];
+      const words = [];
+      wordMatches.forEach((match, index) => {
+        const time = this.parseTimestamp(`${match[1]}:${match[2]}${match[3] || ''}`);
+        const text = (match[5] || '').replace(/\s+/g, ' ');
+        if (time === null || !text) return;
+        words.push({
+          text,
+          start: time,
+          end: null,
+          index
+        });
+      });
+
+      const mainText = lineText.replace(/<(\d{2}):(\d{2})(\.(\d{2,3}))?>/g, '').trim();
+      timeTags.forEach((tag) => {
+        const time = this.parseTimestamp(tag);
+        if (time === null) return;
+        detailByTime.set(Number(time.toFixed(3)), {
+          text: mainText,
+          words
+        });
+      });
+    });
+
+    return baseLines.map((entry, index) => {
+      const time = entry[0];
+      const nextLine = baseLines[index + 1];
+      const key = Number(time.toFixed(3));
+      const detail = detailByTime.get(key);
+      const words = (detail?.words || []).map((word, wordIndex, list) => ({
+        text: word.text,
+        start: word.start,
+        end: list[wordIndex + 1]
+          ? Math.max(word.start, list[wordIndex + 1].start)
+          : (nextLine?.[0] ?? Math.max(time + 4, word.start + 0.4)),
+        index: word.index
+      }));
+
+      return {
+        time,
+        text: detail?.text || entry[1],
+        secondary: [],
+        words
+      };
+    });
+  },
+  shouldIgnoreSecondaryLine: function (text) {
+    if (!text) return true;
+    const normalized = String(text).trim();
+    if (!normalized) return true;
+    return /^\[(ti|ar|al|by|offset|kana|language|length):/i.test(normalized);
+  },
+  findNearestMainLineIndex: function (mainLines, time, threshold) {
+    if (!mainLines.length) return -1;
+    let nearestIndex = -1;
+    let nearestDelta = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < mainLines.length; i++) {
+      const delta = Math.abs(mainLines[i].time - time);
+      if (delta < nearestDelta) {
+        nearestDelta = delta;
+        nearestIndex = i;
+      }
+      if (mainLines[i].time > time && delta > nearestDelta) {
+        break;
+      }
+    }
+
+    return nearestDelta <= threshold ? nearestIndex : -1;
+  },
+  mergeSecondaryLyrics: function (mainLines, secondaryContent) {
+    if (!secondaryContent || !mainLines.length) return mainLines;
+    const mergedLines = mainLines.map((line) => ({
+      ...line,
+      secondary: Array.isArray(line.secondary) ? [...line.secondary] : []
+    }));
+    const secondaryLines = this.parseStandardLrc(secondaryContent);
+
+    secondaryLines.forEach(([time, text]) => {
+      if (this.shouldIgnoreSecondaryLine(text)) return;
+      const mainIndex = this.findNearestMainLineIndex(mergedLines, time, 0.45);
+      if (mainIndex === -1) return;
+      const target = mergedLines[mainIndex];
+      if (text === target.text) return;
+      if (!target.secondary.includes(text)) {
+        target.secondary.push(text);
+      }
+    });
+
+    return mergedLines;
+  },
+  renderLyricLine: function (line, index) {
+    const mainContent = line.words.length
+      ? line.words.map((word, wordIndex) => `<span class="aplayer-lrc-word" data-word-index="${wordIndex}" style="--word-progress:0;"><span class="aplayer-lrc-word-text">${escapeHTML(word.text)}</span></span>`).join('')
+      : escapeHTML(line.text || '');
+    const secondaryContent = line.secondary.map((text) => `<span class="aplayer-lrc-subline">${escapeHTML(text)}</span>`).join('');
+    return `<p class="${index === 0 ? 'aplayer-lrc-current' : ''}" data-line-index="${index}" data-primary="${escapeHTML(line.text || '')}">
+      <span class="aplayer-lrc-main">${mainContent}</span>
+      ${secondaryContent}
+    </p>`;
+  },
+  renderLyrics: function (container, lines) {
+    container.innerHTML = lines.map((line, index) => this.renderLyricLine(line, index)).join('');
+  },
+  fetchLyricBundle: async function (url) {
+    const cached = this.lyricRuntime.cache.get(url);
+    if (cached) return cached;
+
+    const task = (async () => {
+      const requestUrls = this.createLyricRequestUrls(url);
+      const [enhancedRes, secondaryRes] = await Promise.allSettled([
+        fetch(requestUrls.enhanced).then((res) => {
+          if (!res.ok) throw new Error(`enhanced lyric request failed: ${res.status}`);
+          return res.text();
+        }),
+        requestUrls.secondary
+          ? fetch(requestUrls.secondary).then((res) => {
+            if (!res.ok) throw new Error(`secondary lyric request failed: ${res.status}`);
+            return res.text();
+          })
+          : Promise.resolve('')
+      ]);
+
+      const enhancedText = enhancedRes.status === 'fulfilled' ? enhancedRes.value : '';
+      const secondaryText = secondaryRes.status === 'fulfilled' ? secondaryRes.value : '';
+      const mainLines = this.parseEnhancedLrc(enhancedText);
+      const merged = this.mergeSecondaryLyrics(mainLines, secondaryText);
+
+      return {
+        lines: merged,
+        current: merged.map((line) => [line.time, line.text || ''])
+      };
+    })().catch(() => ({
+      lines: [{
+        time: 0,
+        text: '暂无歌词',
+        secondary: [],
+        words: []
+      }],
+      current: [[0, '暂无歌词']]
+    }));
+
+    this.lyricRuntime.cache.set(url, task);
+    return task;
+  },
+  stopLyricTicker: function () {
+    if (this.lyricRuntime.rafId !== null) {
+      cancelAnimationFrame(this.lyricRuntime.rafId);
+      this.lyricRuntime.rafId = null;
+    }
+  },
+  startLyricTicker: function (player) {
+    if (!player?.lrc || player.paused) return;
+    this.lyricRuntime.boundPlayer = player;
+    this.stopLyricTicker();
+    const tick = () => {
+      if (!this.lyricRuntime.boundPlayer || this.lyricRuntime.boundPlayer !== player || player.paused) {
+        this.lyricRuntime.rafId = null;
+        return;
+      }
+      player.lrc.update(player.audio.currentTime);
+      this.lyricRuntime.rafId = requestAnimationFrame(tick);
+    };
+    this.lyricRuntime.rafId = requestAnimationFrame(tick);
+  },
+  enhanceLyrics: function (player) {
+    if (!player || !player.lrc || player.lrc.__heoEnhanced) return;
+
+    const original = {
+      show: player.lrc.show.bind(player.lrc),
+      hide: player.lrc.hide.bind(player.lrc),
+      toggle: player.lrc.toggle.bind(player.lrc)
+    };
+    const lyricModule = player.lrc;
+    lyricModule.__heoEnhanced = true;
+    lyricModule.__heoOriginal = original;
+    lyricModule.parsedDetails = [];
+
+    lyricModule.switch = async function (songIndex) {
+      const audio = this.player.list.audios[songIndex];
+      const lrcUrl = audio?.lrc;
+
+      this.index = 0;
+      heo.lyricRuntime.activeWordIndex = -1;
+      heo.stopLyricTicker();
+
+      if (!lrcUrl) {
+        const fallback = [{ time: 0, text: '暂无歌词', secondary: [], words: [] }];
+        this.parsed[songIndex] = [[0, '暂无歌词']];
+        this.parsedDetails[songIndex] = fallback;
+        this.current = this.parsed[songIndex];
+        heo.lyricRuntime.currentDetail = fallback;
+        heo.renderLyrics(this.container, fallback);
+        this.update(0);
+        return;
+      }
+
+      this.container.innerHTML = '<p class="aplayer-lrc-current" data-line-index="0" data-primary="歌词加载中"><span class="aplayer-lrc-main">歌词加载中</span></p>';
+
+      const bundle = await heo.fetchLyricBundle(lrcUrl);
+      if (songIndex !== this.player.list.index) return;
+
+      this.parsed[songIndex] = bundle.current;
+      this.parsedDetails[songIndex] = bundle.lines;
+      this.current = bundle.current;
+      heo.lyricRuntime.currentDetail = bundle.lines;
+      heo.renderLyrics(this.container, bundle.lines);
+      this.update(0);
+      heo.startLyricTicker(this.player);
+      pageEnhancer.checkNoScrollLyric();
+    };
+
+    lyricModule.update = function () {
+      const currentTime = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : this.player.audio.currentTime;
+      if (!this.current.length) return;
+
+      let activeIndex = 0;
+      for (let i = 0; i < this.current.length; i++) {
+        if (currentTime >= this.current[i][0] && (!this.current[i + 1] || currentTime < this.current[i + 1][0])) {
+          activeIndex = i;
+          break;
+        }
+      }
+
+      if (this.index !== activeIndex) {
+        const prev = this.container.querySelector('.aplayer-lrc-current');
+        const next = this.container.querySelector(`p[data-line-index="${activeIndex}"]`);
+        prev && prev.classList.remove('aplayer-lrc-current');
+        next && next.classList.add('aplayer-lrc-current');
+        this.container.querySelectorAll('.aplayer-lrc-word-active').forEach((wordEl) => wordEl.classList.remove('aplayer-lrc-word-active'));
+        this.index = activeIndex;
+        heo.lyricRuntime.activeWordIndex = -1;
+        heo.scrollLyric();
+      }
+
+      const lineDetail = heo.lyricRuntime.currentDetail[activeIndex];
+      if (!lineDetail?.words?.length) return;
+
+      const currentLineEl = this.container.querySelector(`p[data-line-index="${activeIndex}"]`);
+      if (!currentLineEl) return;
+      let activeWordIndex = -1;
+      currentLineEl.querySelectorAll('.aplayer-lrc-word').forEach((wordEl, index) => {
+        const word = lineDetail.words[index];
+        if (!word) return;
+        let progress = 0;
+        if (currentTime >= word.end) {
+          progress = 1;
+        } else if (currentTime >= word.start && currentTime < word.end) {
+          const duration = Math.max(word.end - word.start, 0.01);
+          progress = Math.min(1, Math.max(0, (currentTime - word.start) / duration));
+          activeWordIndex = index;
+        }
+        wordEl.style.setProperty('--word-progress', progress.toFixed(3));
+        wordEl.classList.toggle('aplayer-lrc-word-active', progress > 0);
+      });
+      heo.lyricRuntime.activeWordIndex = activeWordIndex;
+    };
+
+    lyricModule.remove = function (index) {
+      this.parsed.splice(index, 1);
+      this.parsedDetails.splice(index, 1);
+    };
+
+    lyricModule.clear = function () {
+      this.parsed = [];
+      this.parsedDetails = [];
+      this.current = [];
+      heo.lyricRuntime.currentDetail = [];
+      this.container.innerHTML = '';
+    };
+
+    lyricModule.show = original.show;
+    lyricModule.hide = original.hide;
+    lyricModule.toggle = original.toggle;
+
+    lyricModule.switch(player.list.index);
+  },
   // 处理滚动和触摸事件的通用方法
   handleScrollOrTouch: function(event, isTouchEvent) {
     // 检查事件的目标元素是否在相关区域内部
@@ -222,12 +613,14 @@ var heo = {
   addLyricClickEvent: function () {
     const lrcContent = document.querySelector('.aplayer-lrc-contents');
 
-    if (lrcContent) {
+    if (lrcContent && !lrcContent.dataset.heoLyricBound) {
+      lrcContent.dataset.heoLyricBound = 'true';
       lrcContent.addEventListener('click', function (event) {
-        if (event.target.tagName.toLowerCase() === 'p') {
+        const lineEl = event.target.closest('p[data-line-index]');
+        if (lineEl) {
           const lyrics = lrcContent.getElementsByTagName('p');
           for (let i = 0; i < lyrics.length; i++) {
-            if (lyrics[i] === event.target) {
+            if (lyrics[i] === lineEl) {
               // 获取当前播放器实例
               const player = ap;
               // 使用播放器内部的歌词数据
@@ -253,7 +646,7 @@ var heo = {
   setMediaMetadata: function (aplayerObj, isSongPlaying) {
     const audio = aplayerObj.list.audios[aplayerObj.list.index]
     const coverUrl = audio.cover || './img/icon.webp';
-    const currentLrcContent = document.getElementById("heoMusic-page").querySelector(".aplayer-lrc-current").textContent;
+    const currentLrcContent = this.getCurrentLyricText();
     let songName, songArtist;
 
     if ('mediaSession' in navigator) {
@@ -326,6 +719,7 @@ var heo = {
           navigator.mediaSession.playbackState = 'playing';
           heo.setMediaMetadata(aplayer, true);
         }
+        heo.startLyricTicker(aplayer);
       });
 
       aplayer.on('pause', () => {
@@ -333,6 +727,7 @@ var heo = {
           navigator.mediaSession.playbackState = 'paused';
           heo.setMediaMetadata(aplayer, false);
         }
+        heo.stopLyricTicker();
       });
 
       // 监听时间更新事件
@@ -387,6 +782,35 @@ var heo = {
 }
 
 const pageEnhancer = {
+  ensureFluidAudioGraph() {
+    if (enhanceState.fluid.analyzer || !window.ap || !ap.audio) return;
+
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    try {
+      const audioContext = new AudioContextCtor();
+      const src = audioContext.createMediaElementSource(ap.audio);
+      const analyzer = audioContext.createAnalyser();
+      analyzer.fftSize = 128;
+      src.connect(analyzer);
+      analyzer.connect(audioContext.destination);
+      enhanceState.fluid.audioCtx = audioContext;
+      enhanceState.fluid.source = src;
+      enhanceState.fluid.analyzer = analyzer;
+      enhanceState.fluid.dataArray = new Uint8Array(analyzer.frequencyBinCount);
+    } catch (e) {
+      console.warn('Fluid background audio graph init failed:', e);
+    }
+  },
+  resumeFluidAudioGraph() {
+    this.ensureFluidAudioGraph();
+    const ctx = enhanceState.fluid.audioCtx;
+    if (!ctx || typeof ctx.resume !== 'function' || ctx.state === 'running') return;
+    ctx.resume().catch((error) => {
+      console.warn('Fluid background audio graph resume failed:', error);
+    });
+  },
   initOnce() {
     if (enhanceState.inited || !window.ap || !ap.audio) return;
     enhanceState.inited = true;
@@ -412,8 +836,15 @@ const pageEnhancer = {
   },
   bindPlayerEvents() {
     ['loadeddata', 'listswitch'].forEach((eventName) => ap.on(eventName, () => this.refreshByAudio()));
-    ap.on('play', () => { enhanceState.fluid.paused = false; });
-    ap.on('pause', () => { enhanceState.fluid.paused = true; });
+    ap.on('play', () => {
+      enhanceState.fluid.paused = false;
+      this.resumeFluidAudioGraph();
+      heo.startLyricTicker(ap);
+    });
+    ap.on('pause', () => {
+      enhanceState.fluid.paused = true;
+      heo.stopLyricTicker();
+    });
     ap.on('timeupdate', () => this.syncTimeMode());
   },
   setBgMode(mode) {
@@ -425,18 +856,9 @@ const pageEnhancer = {
     const audio = ap.list.audios[ap.list.index];
     if (!audio) return;
     document.body.style.setProperty('--cover-url', `url('${audio.cover || './img/cover.webp'}')`);
-    this.updateMiniCard(audio);
     this.extractThemeFromCover(audio.cover || './img/cover.webp');
     this.fixLongTitle();
     this.checkNoScrollLyric();
-  },
-  updateMiniCard(audio) {
-    const card = document.getElementById('mini-song-card');
-    document.getElementById('mini-cover').src = audio.cover || './img/cover.webp';
-    document.getElementById('mini-title').textContent = audio.name || '未知标题';
-    document.getElementById('mini-artist').textContent = audio.artist || '未知歌手';
-    card.classList.remove('hidden');
-    setTimeout(() => card.classList.add('hidden'), 4000);
   },
   extractThemeFromCover(cover) {
     const img = new Image();
@@ -537,17 +959,7 @@ const pageEnhancer = {
     canvas.style.height = '100%';
     document.getElementById('dynamic-bg').appendChild(canvas);
     const ctx = canvas.getContext('2d');
-    enhanceState.fluid.ctx = ctx;
-    try {
-      const audioContext = new AudioContext();
-      const src = audioContext.createMediaElementSource(ap.audio);
-      const analyzer = audioContext.createAnalyser();
-      analyzer.fftSize = 128;
-      src.connect(analyzer);
-      analyzer.connect(audioContext.destination);
-      enhanceState.fluid.analyzer = analyzer;
-      enhanceState.fluid.dataArray = new Uint8Array(analyzer.frequencyBinCount);
-    } catch (e) {}
+    enhanceState.fluid.canvasCtx = ctx;
     const draw = () => {
       const { analyzer, dataArray } = enhanceState.fluid;
       let energy = 22;

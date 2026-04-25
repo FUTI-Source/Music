@@ -1,5 +1,34 @@
 class MetingJSElement extends HTMLElement {
 
+  _normalizeProtocol(url) {
+    if (!url || typeof url !== 'string') return url
+
+    const pageProtocol = window.location.protocol
+    if (pageProtocol !== 'https:' && pageProtocol !== 'http:') return url
+
+    if (url.startsWith('//')) {
+      return `${pageProtocol}${url}`
+    }
+
+    if (pageProtocol === 'https:' && url.startsWith('http://')) {
+      return `https://${url.slice(7)}`
+    }
+
+    return url
+  }
+
+  _normalizeAudioItem(item) {
+    if (!item || typeof item !== 'object') return item
+
+    return {
+      ...item,
+      url: this._normalizeProtocol(item.url),
+      lrc: this._normalizeProtocol(item.lrc),
+      cover: this._normalizeProtocol(item.cover),
+      pic: this._normalizeProtocol(item.pic),
+    }
+  }
+
   connectedCallback() {
     if (window.APlayer && window.fetch) {
       this._init()
@@ -101,7 +130,12 @@ class MetingJSElement extends HTMLElement {
 
     fetch(url)
       .then(res => res.json())
-      .then(result => this._loadPlayer(result))
+      .then(result => {
+        const normalized = Array.isArray(result)
+          ? result.map(item => this._normalizeAudioItem(item))
+          : result
+        this._loadPlayer(normalized)
+      })
   }
 
   _loadPlayer(data) {
@@ -134,11 +168,12 @@ class MetingJSElement extends HTMLElement {
     window.ap = this.aplayer;
 
     heo.setupMediaSessionHandlers(this.aplayer);
+    heo.enhanceLyrics(this.aplayer);
   }
 
 }
 
-console.log('\n %c MetingJS v2.0.1 %c https://github.com/metowolf/MetingJS \n', 'color: #fadfa3; background: #030307; padding:5px 0;', 'background: #fadfa3; padding:5px 0;')
+// console.log('\n %c MetingJS v2.0.1 %c https://github.com/metowolf/MetingJS \n', 'color: #fadfa3; background: #030307; padding:5px 0;', 'background: #fadfa3; padding:5px 0;')
 
 if (window.customElements && !window.customElements.get('meting-js')) {
   window.MetingJSElement = MetingJSElement
