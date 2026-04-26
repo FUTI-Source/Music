@@ -17,7 +17,7 @@
   <meta name="theme-color" content="#000000">
 </head>
 <body>
-<div id="dynamic-bg" class="bg-gradient"></div>
+<div id="dynamic-bg" class="bg-fluid"></div>
 <div id="heoMusic-page">
 </div>
 <div id="lyric-scroll-hint" class="lyric-scroll-hint hidden">歌词暂不支持滚动</div>
@@ -33,9 +33,15 @@
       <option value="none">无背景</option>
     </select>
   </label>
+  <label><input id="static-fluid" type="checkbox"> 静态流体</label>
+  <label><input id="gradient-dynamic" type="checkbox" checked> 动态渐变</label>
   <label>模糊 <input id="bg-blur" type="range" min="0" max="40" value="20"></label>
   <label>暗化 <input id="bg-dim" type="range" min="0" max="90" value="45"></label>
-  <label>透明度 <input id="bg-opacity" type="range" min="0.1" max="1" step="0.05" value="0.75"></label>
+  <label>渐变暗化 <input id="bg-dim-gradient" type="range" min="0" max="100" value="45"></label>
+  <label>流体暗化 <input id="bg-dim-fluid" type="range" min="0" max="90" value="30"></label>
+  <label>遮罩模糊 <input id="bg-none-blur" type="range" min="0" max="100" value="0"></label>
+  <label>遮罩暗化 <input id="bg-none-dim" type="range" min="0" max="90" value="0"></label>
+  <label>背景透明度 <input id="bg-opacity" type="range" min="0" max="100" value="0"></label>
   <label>歌词偏移(ms) <input id="lyric-offset" type="range" min="-3000" max="3000" step="100" value="0"></label>
   <label><input id="demo-mode" type="checkbox"> 演示模式（自动隐藏底栏）</label>
 </div>

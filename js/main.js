@@ -52,7 +52,20 @@ const enhanceState = {
   lyricOffset: 0,
   showRemaining: false,
   demoMode: false,
-  fluid: { raf: null, canvasCtx: null, audioCtx: null, source: null, analyzer: null, dataArray: null, paused: false }
+  fluid: {
+    audioCtx: null,
+    source: null,
+    analyzer: null,
+    dataArray: null,
+    paused: false,
+    frame: null,
+    svg: null,
+    feTurbulence: null,
+    feDisplacementMap: null,
+    container: null,
+    canvases: [],
+    staticMode: false
+  }
 };
 
 // 获取地址栏参数
@@ -782,6 +795,19 @@ var heo = {
 }
 
 const pageEnhancer = {
+  settingsKey: 'heoMusic.background.settings',
+  backgroundDefaults: {
+    mode: 'fluid',
+    staticFluid: false,
+    gradientDynamic: true,
+    bgBlur: 20,
+    bgDim: 45,
+    bgDimGradient: 45,
+    bgDimFluid: 30,
+    bgNoneBlur: 0,
+    bgNoneDim: 0,
+    bgOpacity: 0
+  },
   ensureFluidAudioGraph() {
     if (enhanceState.fluid.analyzer || !window.ap || !ap.audio) return;
 
@@ -814,35 +840,98 @@ const pageEnhancer = {
   initOnce() {
     if (enhanceState.inited || !window.ap || !ap.audio) return;
     enhanceState.inited = true;
+    this.initBackgroundEngine();
     this.bindPanel();
     this.bindPlayerEvents();
     this.bindLyricContextMenu();
     this.bindProgressPreview();
     this.initIdleDetector();
-    this.initFluidBackground();
+    this.startFullscreenClock();
+    this.startFluidDisplacementLoop();
     this.refreshByAudio();
+  },
+  loadSettings() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(this.settingsKey) || '{}');
+      return { ...this.backgroundDefaults, ...stored };
+    } catch (error) {
+      return { ...this.backgroundDefaults };
+    }
+  },
+  saveSetting(key, value) {
+    const settings = this.loadSettings();
+    settings[key] = value;
+    localStorage.setItem(this.settingsKey, JSON.stringify(settings));
   },
   bindPanel() {
     const panel = document.getElementById('settings-panel');
+    const settings = this.loadSettings();
+    const setRange = (id, key, value, handler) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = value;
+      handler(value);
+      el.oninput = (e) => {
+        const next = Number(e.target.value);
+        handler(next);
+        this.saveSetting(key, next);
+      };
+    };
+    const setCheckbox = (id, key, value, handler) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.checked = !!value;
+      handler(!!value);
+      el.onchange = (e) => {
+        const next = !!e.target.checked;
+        handler(next);
+        this.saveSetting(key, next);
+      };
+    };
+
     document.getElementById('toggle-settings').onclick = () => panel.classList.toggle('show');
-    document.getElementById('bg-mode').onchange = (e) => this.setBgMode(e.target.value);
-    document.getElementById('bg-blur').oninput = (e) => document.body.style.setProperty('--bg-blur', `${e.target.value}px`);
-    document.getElementById('bg-dim').oninput = (e) => document.body.style.setProperty('--bg-dim', `${e.target.value / 100}`);
-    document.getElementById('bg-opacity').oninput = (e) => document.body.style.setProperty('--bg-opacity', `${e.target.value}`);
-    document.getElementById('lyric-offset').oninput = (e) => { enhanceState.lyricOffset = Number(e.target.value); };
-    document.getElementById('demo-mode').onchange = (e) => { enhanceState.demoMode = e.target.checked; };
     document.getElementById('toggle-fullscreen').onclick = () => this.toggleFullscreen();
     document.getElementById('toggle-time-mode').onclick = () => { enhanceState.showRemaining = !enhanceState.showRemaining; };
+
+    const bgMode = document.getElementById('bg-mode');
+    bgMode.value = settings.mode;
+    this.setBgMode(settings.mode);
+    bgMode.onchange = (e) => {
+      this.setBgMode(e.target.value);
+      this.saveSetting('mode', e.target.value);
+    };
+
+    setCheckbox('static-fluid', 'staticFluid', settings.staticFluid, (checked) => {
+      enhanceState.fluid.staticMode = checked;
+      document.body.classList.toggle('static-fluid', checked);
+      this.syncFluidDisplacementMode();
+    });
+    setCheckbox('gradient-dynamic', 'gradientDynamic', settings.gradientDynamic, (checked) => {
+      document.body.classList.toggle('gradient-bg-dynamic', checked);
+    });
+
+    setRange('bg-blur', 'bgBlur', settings.bgBlur, (value) => document.body.style.setProperty('--bg-blur', `${value}px`));
+    setRange('bg-dim', 'bgDim', settings.bgDim, (value) => document.body.style.setProperty('--bg-dim', `${value / 100}`));
+    setRange('bg-dim-gradient', 'bgDimGradient', settings.bgDimGradient, (value) => document.body.style.setProperty('--bg-dim-gradient', `${value / 100}`));
+    setRange('bg-dim-fluid', 'bgDimFluid', settings.bgDimFluid, (value) => document.body.style.setProperty('--bg-dim-fluid', `${value / 100}`));
+    setRange('bg-none-blur', 'bgNoneBlur', settings.bgNoneBlur, (value) => document.body.style.setProperty('--bg-none-blur', `${value}px`));
+    setRange('bg-none-dim', 'bgNoneDim', settings.bgNoneDim, (value) => document.body.style.setProperty('--bg-none-dim', `${value / 100}`));
+    setRange('bg-opacity', 'bgOpacity', settings.bgOpacity, (value) => document.body.style.setProperty('--bg-opacity', `${1 - value / 100}`));
+
+    document.getElementById('lyric-offset').oninput = (e) => { enhanceState.lyricOffset = Number(e.target.value); };
+    document.getElementById('demo-mode').onchange = (e) => { enhanceState.demoMode = e.target.checked; };
   },
   bindPlayerEvents() {
     ['loadeddata', 'listswitch'].forEach((eventName) => ap.on(eventName, () => this.refreshByAudio()));
     ap.on('play', () => {
       enhanceState.fluid.paused = false;
       this.resumeFluidAudioGraph();
+      this.syncFluidPlaybackState();
       heo.startLyricTicker(ap);
     });
     ap.on('pause', () => {
       enhanceState.fluid.paused = true;
+      this.syncFluidPlaybackState();
       heo.stopLyricTicker();
     });
     ap.on('timeupdate', () => this.syncTimeMode());
@@ -855,10 +944,13 @@ const pageEnhancer = {
   refreshByAudio() {
     const audio = ap.list.audios[ap.list.index];
     if (!audio) return;
-    document.body.style.setProperty('--cover-url', `url('${audio.cover || './img/cover.webp'}')`);
-    this.extractThemeFromCover(audio.cover || './img/cover.webp');
+    const cover = audio.cover || './img/cover.webp';
+    document.body.style.setProperty('--cover-url', `url("${cover}")`);
+    this.extractThemeFromCover(cover);
+    this.updateFluidCover(cover);
     this.fixLongTitle();
     this.checkNoScrollLyric();
+    this.syncFluidPlaybackState();
   },
   extractThemeFromCover(cover) {
     const img = new Image();
@@ -867,19 +959,61 @@ const pageEnhancer = {
       try {
         if (typeof ColorThief === 'undefined') {
           document.body.style.setProperty('--accent', '#8f939a');
+          document.body.style.setProperty('--accent-rgb', '143, 147, 154');
           return;
         }
         const thief = new ColorThief();
         const [r, g, b] = thief.getColor(img);
-        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        const palette = thief.getPalette(img, 8);
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
         const saturation = max === 0 ? 0 : (max - min) / max;
-        const accent = saturation < 0.15 ? '#8f939a' : `rgb(${r},${g},${b})`;
-        document.body.style.setProperty('--accent', accent);
+        const accent = saturation < 0.15 ? [143, 147, 154] : [r, g, b];
+        document.body.style.setProperty('--accent', `rgb(${accent.join(',')})`);
+        document.body.style.setProperty('--accent-rgb', accent.join(', '));
+        document.querySelector('.dynamic-bg-gradient').style.backgroundImage = this.getGradientFromPalette(palette && palette.length ? palette : [accent]);
       } catch (e) {
         document.body.style.setProperty('--accent', '#8f939a');
+        document.body.style.setProperty('--accent-rgb', '143, 147, 154');
       }
     };
     img.src = cover;
+  },
+  rgb2Hsl(color) {
+    let [r, g, b] = color.map((item) => item / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        default: h = (r - g) / d + 4; break;
+      }
+      h /= 6;
+    }
+    return [h, s, l];
+  },
+  calcLuminance(color) {
+    let [r, g, b] = color.map((item) => item / 255);
+    [r, g, b] = [r, g, b].map((item) => item <= 0.03928 ? item / 12.92 : Math.pow((item + 0.055) / 1.055, 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  },
+  getGradientFromPalette(palette) {
+    const safePalette = (palette || []).filter((item) => Array.isArray(item) && item.length >= 3);
+    if (!safePalette.length) {
+      return 'linear-gradient(-45deg, rgb(70,70,70), rgb(20,20,20))';
+    }
+    const colors = safePalette
+      .slice()
+      .sort((a, b) => this.calcLuminance(a) - this.calcLuminance(b))
+      .slice(0, Math.min(6, safePalette.length))
+      .sort((a, b) => this.rgb2Hsl(b)[1] - this.rgb2Hsl(a)[1]);
+    return `linear-gradient(-45deg, ${colors.map((item) => `rgb(${item[0]}, ${item[1]}, ${item[2]})`).join(', ')})`;
   },
   fixLongTitle() {
     const titleEl = document.querySelector('.aplayer-title');
@@ -919,7 +1053,7 @@ const pageEnhancer = {
   checkNoScrollLyric() {
     const hint = document.getElementById('lyric-scroll-hint');
     const lines = document.querySelectorAll('.aplayer-lrc p');
-    const noScroll = lines.length <= 1 || [...lines].every(el => (el.textContent || '').includes('纯音乐'));
+    const noScroll = lines.length <= 1 || [...lines].every((el) => (el.textContent || '').includes('纯音乐'));
     hint.classList.toggle('hidden', !noScroll);
   },
   syncTimeMode() {
@@ -951,37 +1085,7 @@ const pageEnhancer = {
     document.addEventListener('mousemove', wake);
     wake();
   },
-  initFluidBackground() {
-    const canvas = document.createElement('canvas');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    document.getElementById('dynamic-bg').appendChild(canvas);
-    const ctx = canvas.getContext('2d');
-    enhanceState.fluid.canvasCtx = ctx;
-    const draw = () => {
-      const { analyzer, dataArray } = enhanceState.fluid;
-      let energy = 22;
-      if (analyzer && dataArray) {
-        analyzer.getByteFrequencyData(dataArray);
-        energy = dataArray.reduce((sum, n) => sum + n, 0) / dataArray.length / 6;
-      }
-      if (!enhanceState.fluid.paused) {
-        const t = Date.now() / 1000;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < 4; i++) {
-          const x = (Math.sin(t * (0.2 + i * 0.1)) * 0.3 + 0.5) * canvas.width;
-          const y = (Math.cos(t * (0.18 + i * 0.1)) * 0.3 + 0.5) * canvas.height;
-          const r = 180 + i * 90 + energy * 2;
-          ctx.fillStyle = `hsla(${(t * 30 + i * 60) % 360}, 75%, 60%, 0.12)`;
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-        }
-      }
-      enhanceState.fluid.raf = requestAnimationFrame(draw);
-    };
-    draw();
-    window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+  startFullscreenClock() {
     setInterval(() => {
       const clock = document.getElementById('fullscreen-clock');
       const inFull = !!document.fullscreenElement;
@@ -991,6 +1095,127 @@ const pageEnhancer = {
         clock.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       }
     }, 1000);
+  },
+  initBackgroundEngine() {
+    const bg = document.getElementById('dynamic-bg');
+    if (!bg || bg.dataset.enhanced === 'true') return;
+    bg.dataset.enhanced = 'true';
+    bg.innerHTML = `
+      <div class="dynamic-bg-blur"></div>
+      <div class="dynamic-bg-gradient"></div>
+      <div class="dynamic-bg-fluid">
+        <div class="dynamic-bg-fluid-rect"></div>
+      </div>
+      <div class="dynamic-bg-solid"></div>
+      <div class="dynamic-bg-none"></div>
+    `;
+    this.initFluidBackground(bg.querySelector('.dynamic-bg-fluid-rect'));
+  },
+  initFluidBackground(container) {
+    const fluid = enhanceState.fluid;
+    fluid.container = container;
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+    svg.style.position = 'absolute';
+    svg.innerHTML = `
+      <filter id="fluid-filter" x="-20%" y="-20%" width="140%" height="140%" filterUnits="objectBoundingBox" primitiveUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.005" numOctaves="1" seed="0"></feTurbulence>
+        <feDisplacementMap in="SourceGraphic" scale="400"></feDisplacementMap>
+      </filter>
+    `;
+    document.body.appendChild(svg);
+
+    fluid.svg = svg;
+    fluid.feTurbulence = svg.querySelector('feTurbulence');
+    fluid.feDisplacementMap = svg.querySelector('feDisplacementMap');
+    fluid.canvases = [];
+
+    for (let i = 1; i <= 4; i++) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 100;
+      canvas.height = 100;
+      canvas.dataset.canvasId = String(i);
+      canvas.className = 'dynamic-bg-fluid-canvas';
+      container.appendChild(canvas);
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.filter = 'blur(5px)';
+      fluid.canvases.push(canvas);
+    }
+
+    this.resizeFluidCanvases();
+    window.addEventListener('resize', () => this.resizeFluidCanvases());
+  },
+  resizeFluidCanvases() {
+    const canvasList = enhanceState.fluid.canvases;
+    if (!canvasList.length) return;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const viewSize = Math.max(width, height);
+    const canvasSize = viewSize * 0.707;
+
+    for (let x = 0; x <= 1; x++) {
+      for (let y = 0; y <= 1; y++) {
+        const canvas = canvasList[y * 2 + x];
+        const signX = x === 0 ? -1 : 1;
+        const signY = y === 0 ? -1 : 1;
+        canvas.style.width = `${canvasSize}px`;
+        canvas.style.height = `${canvasSize}px`;
+        canvas.style.left = `${(width / 2 + signX * canvasSize * 0.35) - canvasSize / 2}px`;
+        canvas.style.top = `${(height / 2 + signY * canvasSize * 0.35) - canvasSize / 2}px`;
+      }
+    }
+  },
+  updateFluidCover(url) {
+    const canvasList = enhanceState.fluid.canvases;
+    if (!canvasList.length || !url) return;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const width = image.width;
+      const height = image.height;
+      const pieces = [
+        [0, 0, width / 2, height / 2],
+        [width / 2, 0, width / 2, height / 2],
+        [0, height / 2, width / 2, height / 2],
+        [width / 2, height / 2, width / 2, height / 2]
+      ];
+      canvasList.forEach((canvas, index) => {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const part = pieces[index];
+        ctx.drawImage(image, part[0], part[1], part[2], part[3], 0, 0, 100, 100);
+      });
+      if (enhanceState.fluid.feTurbulence) {
+        enhanceState.fluid.feTurbulence.setAttribute('seed', String(Math.floor(Math.random() * 1000)));
+      }
+    };
+    image.src = url;
+  },
+  syncFluidPlaybackState() {
+    if (!enhanceState.fluid.container) return;
+    const paused = enhanceState.fluid.staticMode || ap.audio?.paused;
+    enhanceState.fluid.container.classList.toggle('paused', !!paused);
+  },
+  syncFluidDisplacementMode() {
+    if (!enhanceState.fluid.feDisplacementMap) return;
+    enhanceState.fluid.feDisplacementMap.setAttribute('scale', enhanceState.fluid.staticMode ? '400' : enhanceState.fluid.feDisplacementMap.getAttribute('scale') || '400');
+    this.syncFluidPlaybackState();
+  },
+  startFluidDisplacementLoop() {
+    const step = () => {
+      const { analyzer, dataArray, feDisplacementMap, staticMode } = enhanceState.fluid;
+      if (!staticMode && analyzer && dataArray && feDisplacementMap && !ap.audio?.paused) {
+        analyzer.getByteFrequencyData(dataArray);
+        const average = dataArray.reduce((sum, value) => sum + value, 0) / Math.max(1, dataArray.length);
+        const scale = Math.min(600, Math.max(220, 520 - average * 1.2));
+        feDisplacementMap.setAttribute('scale', scale.toFixed(1));
+      }
+      enhanceState.fluid.frame = requestAnimationFrame(step);
+    };
+    enhanceState.fluid.frame = requestAnimationFrame(step);
   }
 };
 

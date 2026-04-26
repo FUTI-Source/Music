@@ -40,7 +40,13 @@ body {
   --accent: #9aa0a6;
   --bg-blur: 20px;
   --bg-dim: 0.45;
-  --bg-opacity: 0.75;
+  --bg-dim-gradient: 0.45;
+  --bg-dim-fluid: 0.3;
+  --bg-none-blur: 0px;
+  --bg-none-dim: 0;
+  --bg-opacity: 1;
+  --fluid-blur: 64px;
+  --accent-rgb: 154, 160, 166;
 }
 
 #heoMusic-page .aplayer{
@@ -351,22 +357,34 @@ body #nav-music {
   position: fixed;
   inset: 0;
   z-index: -2;
-  transition: all .4s ease;
+  overflow: hidden;
+  opacity: var(--bg-opacity);
+  transition: opacity .4s ease;
 }
 
-#dynamic-bg::after {
-  content: "";
+#dynamic-bg > div {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, var(--bg-dim));
+  pointer-events: none;
 }
 
-.bg-gradient {
-  background: radial-gradient(circle at 20% 20%, color-mix(in oklab, var(--accent) 65%, #000), #0f1115 65%);
+.bg-blur .dynamic-bg-blur,
+.bg-gradient .dynamic-bg-gradient,
+.bg-fluid .dynamic-bg-fluid,
+.bg-solid .dynamic-bg-solid,
+.bg-none .dynamic-bg-none {
+  display: block;
 }
-.bg-solid { background: color-mix(in oklab, var(--accent) 70%, #111); }
-.bg-none { background: #0e0e0e; }
-.bg-blur {
+
+.dynamic-bg-blur,
+.dynamic-bg-gradient,
+.dynamic-bg-fluid,
+.dynamic-bg-solid,
+.dynamic-bg-none {
+  display: none;
+}
+
+.dynamic-bg-blur {
   background-image: var(--cover-url);
   background-size: cover;
   background-position: center;
@@ -374,11 +392,134 @@ body #nav-music {
   transform: scale(1.08);
 }
 
+.dynamic-bg-blur::before,
+.dynamic-bg-gradient::before,
+.dynamic-bg-fluid::before,
+.dynamic-bg-none::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.dynamic-bg-blur::before {
+  background: rgba(0, 0, 0, var(--bg-dim));
+}
+
+.dynamic-bg-gradient {
+  background-image: radial-gradient(circle at 20% 20%, color-mix(in oklab, var(--accent) 65%, #000), #0f1115 65%);
+  background-size: 400% 400%;
+  background-position: 50% 50%;
+}
+
+.dynamic-bg-gradient::before {
+  background: rgba(0, 0, 0, var(--bg-dim-gradient));
+}
+
+body.gradient-bg-dynamic .dynamic-bg-gradient {
+  animation: bg-gradient-animation 120s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+@keyframes bg-gradient-animation {
+  0% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+.dynamic-bg-solid {
+  background: color-mix(in oklab, var(--accent) 70%, #111);
+}
+
+.dynamic-bg-none {
+  background: transparent;
+}
+
+.dynamic-bg-none::before {
+  background: rgba(0, 0, 0, var(--bg-none-dim));
+}
+
+.dynamic-bg-none::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(var(--bg-none-blur));
+  -webkit-backdrop-filter: blur(var(--bg-none-blur));
+}
+
+.dynamic-bg-fluid {
+  width: calc(100% + 150px);
+  height: calc(100% + 150px);
+  left: -150px;
+  top: -150px;
+  background-image: var(--cover-url);
+  background-size: cover;
+  background-position: center;
+}
+
+.dynamic-bg-fluid::before {
+  background: rgba(0, 0, 0, var(--bg-dim-fluid));
+  z-index: 1;
+}
+
+.dynamic-bg-fluid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  backdrop-filter: blur(var(--fluid-blur));
+  -webkit-backdrop-filter: blur(var(--fluid-blur));
+}
+
+.dynamic-bg-fluid-rect {
+  animation: fluid-container-rotate 150s linear infinite;
+  animation-play-state: running;
+  width: max(100vw, 100vh);
+  height: max(100vw, 100vh);
+  top: calc(50% - 50vh);
+  left: calc(50% - 50vw);
+  position: relative;
+  filter: saturate(1.5) brightness(0.8) url(#fluid-filter);
+}
+
+.dynamic-bg-fluid-rect.paused,
+body.static-fluid .dynamic-bg-fluid-rect {
+  animation-play-state: paused;
+}
+
+.dynamic-bg-fluid-canvas {
+  position: absolute;
+  animation: fluid-block-rotate 60s linear infinite;
+  animation-play-state: running;
+  opacity: 1;
+}
+
+.dynamic-bg-fluid-canvas[data-canvas-id="2"] { animation-delay: -5s; }
+.dynamic-bg-fluid-canvas[data-canvas-id="3"] { animation-delay: -10s; }
+.dynamic-bg-fluid-canvas[data-canvas-id="4"] { animation-delay: -15s; }
+
+.dynamic-bg-fluid-rect.paused .dynamic-bg-fluid-canvas,
+body.static-fluid .dynamic-bg-fluid-canvas {
+  animation-play-state: paused;
+}
+
+@keyframes fluid-block-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes fluid-container-rotate {
+  0% { transform: scale(1.2) rotate(0deg); }
+  100% { transform: scale(1.2) rotate(-360deg); }
+}
+
 .settings-panel {
   position: fixed;
   right: 18px;
   top: 18px;
-  width: 220px;
+  width: 240px;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
   padding: 12px;
   border-radius: 12px;
   background: rgba(10, 10, 10, .6);
@@ -390,6 +531,7 @@ body #nav-music {
 .settings-panel.show { display: flex; flex-direction: column; gap: 8px; }
 .settings-panel h3 { margin: 0 0 4px; font-size: 14px; color: var(--accent); }
 .settings-panel label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
+.settings-panel input[type="checkbox"] { margin-right: 6px; }
 
 .floating-actions {
   position: fixed;
