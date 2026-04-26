@@ -1,6 +1,8 @@
 var userId = "8668419170";
 var userServer = "tencent";
 var userType = "playlist";
+// 对接自定义 Meting API（可按需增加 br / format / trans / roma 等参数）
+// var meting_api = "http://meting.eggedu.cn/meting/?server=:server&type=:type&id=:id&r=:r";
 // var localMusic = [{
 //     name: '重生之我在异乡为异客',
 //     artist: '王睿卓',

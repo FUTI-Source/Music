@@ -17,10 +17,43 @@
   <meta name="theme-color" content="#000000">
 </head>
 <body>
+<div id="dynamic-bg" class="bg-fluid"></div>
 <div id="heoMusic-page">
 </div>
+<div id="lyric-scroll-hint" class="lyric-scroll-hint hidden">歌词暂不支持滚动</div>
+<div id="hover-lyric-preview" class="hover-lyric-preview hidden"></div>
+<div id="settings-panel" class="settings-panel">
+  <h3>播放页设置</h3>
+  <label>背景模式
+    <select id="bg-mode">
+      <option value="fluid">流体</option>
+      <option value="blur">模糊封面</option>
+      <option value="gradient">渐变</option>
+      <option value="solid">纯色</option>
+      <option value="none">无背景</option>
+    </select>
+  </label>
+  <label><input id="static-fluid" type="checkbox"> 静态流体</label>
+  <label><input id="gradient-dynamic" type="checkbox" checked> 动态渐变</label>
+  <label>模糊 <input id="bg-blur" type="range" min="0" max="40" value="20"></label>
+  <label>暗化 <input id="bg-dim" type="range" min="0" max="90" value="45"></label>
+  <label>渐变暗化 <input id="bg-dim-gradient" type="range" min="0" max="100" value="45"></label>
+  <label>流体暗化 <input id="bg-dim-fluid" type="range" min="0" max="90" value="30"></label>
+  <label>遮罩模糊 <input id="bg-none-blur" type="range" min="0" max="100" value="0"></label>
+  <label>遮罩暗化 <input id="bg-none-dim" type="range" min="0" max="90" value="0"></label>
+  <label>背景透明度 <input id="bg-opacity" type="range" min="0" max="100" value="0"></label>
+  <label>歌词偏移(ms) <input id="lyric-offset" type="range" min="-3000" max="3000" step="100" value="0"></label>
+  <label><input id="demo-mode" type="checkbox"> 演示模式（自动隐藏底栏）</label>
+</div>
+<div id="floating-actions" class="floating-actions">
+  <button id="toggle-settings" title="设置">⚙</button>
+  <button id="toggle-fullscreen" title="全屏">⛶</button>
+  <button id="toggle-time-mode" title="时间模式">⏱</button>
+</div>
+<div id="fullscreen-clock" class="fullscreen-clock hidden"></div>
 <script src="./config.js"></script>
 <script src="./js/APlayer.min.js"></script>
+<script src="./js/color-thief.min.js"></script>
 <script async data-pjax src="./js/main.js"></script>
 </body>
 </html>
