@@ -26,6 +26,11 @@
   --heo-snackbar-time: 5s;
 }
 
+
+body, .aplayer * {
+    font-family: "LXGW WenKai", system-ui, "Microsoft Yahei", "Segoe UI", Arial, sans-serif;
+}
+
 #page {
   border: 0;
   box-shadow: none !important;
